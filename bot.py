@@ -732,7 +732,7 @@ async def execute_real_download(item, context):
                 await download_telegram_message(fake_update, context, url)
         else:
             # Verifica se é download com qualidade específica
-            if hasattr(item, 'type') and item.type == 'generic_quality':
+            if hasattr(item, 'download_type') and item.download_type == 'generic_quality':
                 await download_generic_video_quality(fake_update, context, url, item.format_id)
             else:
                 # URL genérica - tenta download com yt-dlp
@@ -1152,16 +1152,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(f"📹 **Baixando qualidade selecionada...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
         
         # Adiciona à fila com qualidade específica
-        item = {
-            'chat_id': chat_id,
-            'url': url,
-            'type': 'generic_quality',
-            'format_id': format_id,
-            'status': 'pending',
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        add_to_queue(item)
+        await add_to_queue(
+            chat_id=chat_id,
+            url=url,
+            download_type='generic_quality',
+            user_name="Usuário",
+            priority="normal",
+            format_id=format_id
+        )
         
         await context.bot.send_message(
             chat_id,
