@@ -1,4 +1,9 @@
-python-telegram-bot
-yt-dlp
-python-dotenv
-Pillow
+python-telegram-bot>=20.0
+yt-dlp>=2023.12.30
+python-dotenv>=1.0.0
+Pillow>=10.0.0
+ffmpeg-python>=0.2.0
+requests>=2.31.0
+aiohttp>=3.9.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
