@@ -643,16 +643,16 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ]
         ]
     
-    # YouTube vertical (possível Short)
-    elif is_vertical_youtube_video(message_text):
-        platform_detected = "YouTube"
-        platform_emoji = "📺"
-        keyboard = [
-            [
-                InlineKeyboardButton("📱 Como Short", callback_data=f"youtube_short:{url_id}"),
-                InlineKeyboardButton("🎬 Como Vídeo", callback_data=f"video:{url_id}")
-            ]
-        ]
+    # YouTube vertical removido - comentado
+    # elif is_vertical_youtube_video(message_text):
+    #     platform_detected = "YouTube"
+    #     platform_emoji = "📺"
+    #     keyboard = [
+    #         [
+    #             InlineKeyboardButton("📱 Como Short", callback_data=f"youtube_short:{url_id}"),
+    #             InlineKeyboardButton("🎬 Como Vídeo", callback_data=f"video:{url_id}")
+    #         ]
+    #     ]
     
     # Padrão para outros links
     else:
