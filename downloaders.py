@@ -334,9 +334,9 @@ async def download_story(update, context, url=None):
 async def send_video_with_fallback(chat_id, video_file, context, caption=""):
     """Envia vídeo com fallback para documento em caso de timeout e compressão para arquivos grandes."""
     try:
-        # Verifica o tamanho do arquivo (limite do Telegram: 50MB)
+        # Verifica o tamanho do arquivo (limite configurado: 40MB)
         file_size = os.path.getsize(video_file)
-        max_size = 50 * 1024 * 1024  # 50MB em bytes
+        max_size = 40 * 1024 * 1024  # 40MB em bytes conforme solicitado
         
         # Se o arquivo for muito grande, comprime
         if file_size > max_size:
@@ -420,7 +420,7 @@ async def send_video_with_fallback(chat_id, video_file, context, caption=""):
             logger.warning(f"Arquivo {video_file} muito grande para Telegram, tentando compressão adicional")
             await context.bot.send_message(chat_id, text=f"📹 Arquivo muito grande, tentando compressão adicional...")
             # Tenta compressão mais agressiva
-            ultra_compressed = await compress_video(video_file, 25 * 1024 * 1024, aggressive=True)
+            ultra_compressed = await compress_video(video_file, 30 * 1024 * 1024, aggressive=True)
             if ultra_compressed and os.path.exists(ultra_compressed):
                 try:
                     with open(ultra_compressed, 'rb') as video:
