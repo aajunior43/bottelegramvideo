@@ -5,7 +5,7 @@ __version__ = "2.0.0"
 __author__ = "Bot Telegram Video Downloader"
 
 # Importações principais
-from .utils import (
+from utils import (
     create_progress_bar,
     get_loading_emoji,
     get_status_emoji,
@@ -19,7 +19,7 @@ from .utils import (
     check_ffmpeg
 )
 
-from .queue_manager import (
+from queue_manager import (
     QueueItem,
     download_queue,
     queue_lock,
@@ -36,7 +36,7 @@ from .queue_manager import (
     get_queue_position
 )
 
-from .downloaders import (
+from downloaders import (
     split_video_with_ytdlp,
     split_file_by_size,
     download_story,
