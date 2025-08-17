@@ -49,16 +49,10 @@ class YouTubeShortsDownloader:
             # Comando yt-dlp otimizado para Shorts (formato vertical)
             command = [
                 'yt-dlp',
-                '--format', f'{quality}[height>=720][width<height]/best[height>=720]/best',  # Prioriza vertical
-                '--write-thumbnail',
-                '--write-description',
-                '--write-info-json',
-                '--merge-output-format', 'mp4',
+                '--format', f'{quality}[height<=720]/best',  # Formato simplificado
                 '--output', output_template,
                 '--no-playlist',
-                '--extract-flat', 'false',
-                '--embed-chapters',
-                '--embed-metadata',
+                '--no-warnings',
                 url
             ]
             
