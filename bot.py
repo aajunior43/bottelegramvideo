@@ -659,7 +659,10 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         platform_detected = "Link genérico"
         keyboard = [
             [
-                InlineKeyboardButton("🎬 Baixar Vídeo", callback_data=f"video:{url_id}"),
+                InlineKeyboardButton("📋 Ver Qualidades", callback_data=f"qualities:{url_id}"),
+                InlineKeyboardButton("🎬 Baixar Melhor", callback_data=f"video:{url_id}")
+            ],
+            [
                 InlineKeyboardButton("🖼️ Baixar Imagens", callback_data=f"images:{url_id}")
             ]
         ]
@@ -728,14 +731,114 @@ async def execute_real_download(item, context):
             else:
                 await download_telegram_message(fake_update, context, url)
         else:
-             # URL genérica - tenta download com yt-dlp
-             await download_generic_video(fake_update, context, url)
+            # Verifica se é download com qualidade específica
+            if hasattr(item, 'type') and item.type == 'generic_quality':
+                await download_generic_video_quality(fake_update, context, url, item.format_id)
+            else:
+                # URL genérica - tenta download com yt-dlp
+                await download_generic_video(fake_update, context, url)
         
         return True
         
     except Exception as e:
         logger.error(f"Erro no download real: {e}")
         return False
+
+async def download_generic_video_quality(update, context, url, format_id):
+    """Baixa vídeo genérico com qualidade específica usando yt-dlp."""
+    chat_id = update.message.chat_id
+    message_id = 0
+    
+    try:
+        await send_progress_message(
+            context, chat_id,
+            f"📹 Iniciando download com qualidade específica\n\n📎 {url[:50]}...\n🎯 Formato: {format_id}",
+            'downloading', 0
+        )
+        
+        # Template de saída
+        output_template = f"{chat_id}_{message_id}_quality_{format_id}_%(title)s.%(ext)s"
+        
+        # Comando yt-dlp com qualidade específica
+        command = [
+            'yt-dlp',
+            '--format', format_id,
+            '--output', output_template,
+            '--no-playlist',
+            '--no-warnings',
+            url
+        ]
+        
+        logger.info(f"Executando comando qualidade específica: {' '.join(command)}")
+        
+        # Executa o comando
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            await send_progress_message(
+                context, chat_id,
+                "📹 Download concluído! Processando vídeo...",
+                'processing', 75
+            )
+            
+            # Procura por arquivos baixados
+            downloaded_files = []
+            for file in os.listdir('.'):
+                if file.startswith(f"{chat_id}_{message_id}_quality_{format_id}_") and (file.endswith('.mp4') or file.endswith('.webm') or file.endswith('.mkv')):
+                    downloaded_files.append(file)
+            
+            if downloaded_files:
+                video_file = downloaded_files[0]
+                
+                # Envia o vídeo
+                await send_video_with_fallback(
+                    chat_id, video_file, context,
+                    f"📹 Vídeo (Qualidade: {format_id})\n\n📎 {url[:50]}..."
+                )
+                
+                # Remove arquivos temporários
+                for file in os.listdir('.'):
+                    if file.startswith(f"{chat_id}_{message_id}_quality_{format_id}_"):
+                        try:
+                            os.remove(file)
+                            logger.info(f"Arquivo removido: {file}")
+                        except Exception as e:
+                            logger.warning(f"Erro ao remover {file}: {e}")
+                
+                await send_progress_message(
+                    context, chat_id,
+                    "✅ Vídeo baixado com qualidade específica!",
+                    'completed', 100
+                )
+            else:
+                await send_progress_message(
+                    context, chat_id,
+                    "❌ Nenhum arquivo encontrado\n\n💡 Verifique se a URL e qualidade são válidas",
+                    'error'
+                )
+        else:
+            error_message = stderr.decode('utf-8', errors='ignore')
+            logger.error(f"Erro no yt-dlp qualidade específica: {error_message}")
+            
+            await send_progress_message(
+                context, chat_id,
+                f"❌ Erro ao baixar com qualidade específica\n\n💡 Tente outra qualidade ou melhor qualidade disponível",
+                'error'
+            )
+    
+    except Exception as e:
+        logger.error(f"Erro inesperado no download qualidade específica: {e}")
+        await send_progress_message(
+            context, chat_id,
+            f"❌ Erro inesperado\n\nDetalhes: {str(e)[:100]}...",
+            'error'
+        )
 
 async def process_download_queue(context):
     """Processa a fila de downloads sequencialmente."""
@@ -995,6 +1098,80 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     #     await query.edit_message_text(f"📱 **Processando YouTube Short...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
     #     
     #     await download_youtube_short(query, context, url)
+    
+    elif action == 'qualities':
+        url_id = callback_parts[1]
+        url = get_url_from_context(url_id)
+        
+        await query.edit_message_text(f"📋 **Obtendo qualidades disponíveis...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
+        
+        try:
+            qualities = await get_video_qualities(url)
+            
+            if qualities:
+                # Cria botões para cada qualidade
+                keyboard = []
+                for quality in qualities:
+                    quality_text = f"{quality['quality'][:30]}..."
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"📹 {quality_text}", 
+                            callback_data=f"download_quality:{url_id}:{quality['format_id']}"
+                        )
+                    ])
+                
+                # Adiciona opção para melhor qualidade
+                keyboard.append([
+                    InlineKeyboardButton("🏆 Melhor Qualidade", callback_data=f"video:{url_id}")
+                ])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    f"📋 **Qualidades Disponíveis:**\n\n📎 `{url[:50]}...`\n\n🎯 Escolha uma qualidade:",
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ **Não foi possível obter qualidades**\n\n📎 `{url[:50]}...`\n\n💡 Tente baixar na melhor qualidade disponível.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            logger.error(f"Erro ao obter qualidades: {e}")
+            await query.edit_message_text(
+                f"❌ **Erro ao obter qualidades**\n\n📎 `{url[:50]}...`\n\n💡 Tente baixar na melhor qualidade disponível.",
+                parse_mode='Markdown'
+            )
+    
+    elif action == 'download_quality':
+        url_id = callback_parts[1]
+        format_id = callback_parts[2]
+        url = get_url_from_context(url_id)
+        
+        await query.edit_message_text(f"📹 **Baixando qualidade selecionada...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
+        
+        # Adiciona à fila com qualidade específica
+        item = {
+            'chat_id': chat_id,
+            'url': url,
+            'type': 'generic_quality',
+            'format_id': format_id,
+            'status': 'pending',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        add_to_queue(item)
+        
+        await context.bot.send_message(
+            chat_id,
+            f"✅ **Adicionado à fila!**\n\n📹 Qualidade: `{format_id}`\n📎 URL: `{url[:50]}...`",
+            parse_mode='Markdown'
+        )
+        
+        # Inicia processamento se não estiver rodando
+        if not is_queue_processing():
+            asyncio.create_task(process_download_queue(context))
     
     elif action.startswith('twitch_'):
         url_id = callback_parts[1]
