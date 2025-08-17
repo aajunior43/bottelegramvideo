@@ -52,6 +52,80 @@ async def split_video_with_ytdlp(video_url, chat_id, message_id, max_size_bytes)
         logger.error(f"Erro na divisão com yt-dlp: {e}")
         return []
 
+async def split_video_with_ffmpeg(video_file, max_size_bytes):
+    """Divide vídeo em partes usando FFmpeg mantendo formato válido."""
+    try:
+        # Verifica se FFmpeg está disponível
+        try:
+            ffmpeg_check = await asyncio.create_subprocess_exec(
+                'ffmpeg', '-version',
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            await ffmpeg_check.communicate()
+            if ffmpeg_check.returncode != 0:
+                return []
+        except:
+            return []
+        
+        # Obtém duração do vídeo
+        duration_cmd = [
+            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'csv=p=0', video_file
+        ]
+        
+        process = await asyncio.create_subprocess_exec(
+            *duration_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            return []
+        
+        total_duration = float(stdout.decode().strip())
+        file_size = os.path.getsize(video_file)
+        
+        # Calcula número de partes baseado no tamanho
+        num_parts = (file_size + max_size_bytes - 1) // max_size_bytes
+        part_duration = total_duration / num_parts
+        
+        parts = []
+        base_name = os.path.splitext(video_file)[0]
+        
+        for i in range(int(num_parts)):
+            start_time = i * part_duration
+            part_file = f"{base_name}_part{i+1}.mp4"
+            
+            split_cmd = [
+                'ffmpeg', '-i', video_file, '-ss', str(start_time),
+                '-t', str(part_duration), '-c', 'copy', '-y', part_file
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *split_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            await process.communicate()
+            
+            if process.returncode == 0 and os.path.exists(part_file):
+                parts.append(part_file)
+                logger.info(f"Parte de vídeo criada: {part_file} ({os.path.getsize(part_file)/1024/1024:.1f}MB)")
+        
+        return parts
+        
+    except Exception as e:
+        logger.error(f"Erro na divisão com FFmpeg: {e}")
+        return []
+            
+    except Exception as e:
+        logger.error(f"Erro na divisão com yt-dlp: {e}")
+        return []
+
 async def compress_video(video_file, target_size, aggressive=False):
     """Comprime vídeo para o tamanho alvo."""
     try:
@@ -115,20 +189,36 @@ async def compress_video(video_file, target_size, aggressive=False):
         return None
 
 async def send_video_part(chat_id, video_file, context, caption):
-    """Envia uma parte do arquivo como documento."""
+    """Envia uma parte do arquivo como vídeo, com fallback para documento."""
     try:
-        # Envia sempre como documento para garantir compatibilidade
-        with open(video_file, 'rb') as file:
-            filename = os.path.basename(video_file)
-            await context.bot.send_document(
-                chat_id,
-                document=file,
-                filename=filename,
-                caption=caption,
-                read_timeout=300,
-                write_timeout=300
-            )
-        logger.info(f"Parte enviada como documento: {filename}")
+        filename = os.path.basename(video_file)
+        
+        # Tenta enviar como vídeo primeiro
+        try:
+            with open(video_file, 'rb') as video:
+                await context.bot.send_video(
+                    chat_id,
+                    video=video,
+                    caption=caption,
+                    supports_streaming=True,
+                    read_timeout=300,
+                    write_timeout=300
+                )
+            logger.info(f"Parte enviada como vídeo: {filename}")
+        except Exception as video_error:
+            # Fallback para documento se envio como vídeo falhar
+            logger.warning(f"Erro ao enviar como vídeo, tentando como documento: {video_error}")
+            with open(video_file, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id,
+                    document=file,
+                    filename=filename,
+                    caption=caption,
+                    read_timeout=300,
+                    write_timeout=300
+                )
+            logger.info(f"Parte enviada como documento: {filename}")
+            
     except Exception as e:
         logger.error(f"Erro ao enviar parte do arquivo: {e}")
         await context.bot.send_message(
@@ -349,7 +439,13 @@ async def send_video_with_fallback(chat_id, video_file, context, caption=""):
                 # Se a compressão falhar, tenta dividir o arquivo
                 logger.warning("Compressão falhou, tentando dividir arquivo...")
                 await context.bot.send_message(chat_id, "📹 Arquivo muito grande, dividindo em partes...")
-                parts = await split_file_by_size(video_file, max_size)
+                
+                # Tenta dividir com FFmpeg primeiro (mantém formato de vídeo)
+                parts = await split_video_with_ffmpeg(video_file, max_size)
+                if not parts:
+                    # Fallback para divisão binária se FFmpeg não estiver disponível
+                    parts = await split_file_by_size(video_file, max_size)
+                
                 if parts:
                     for i, part in enumerate(parts, 1):
                         part_caption = f"{caption} - Parte {i}/{len(parts)}"
