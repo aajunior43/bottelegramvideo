@@ -38,6 +38,91 @@ async def split_video_with_ytdlp(video_url, chat_id, message_id, max_size_bytes)
         stdout, stderr = await process.communicate()
         
         if process.returncode == 0:
+            # Procura por arquivos gerados
+            parts = []
+            for file in os.listdir('.'):
+                if file.startswith(f"{chat_id}_{message_id}_part"):
+                    parts.append(file)
+            return sorted(parts)
+        else:
+            logger.error(f"Erro no yt-dlp split: {stderr.decode()}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Erro na divisão com yt-dlp: {e}")
+        return []
+
+async def compress_video(video_file, target_size, aggressive=False):
+    """Comprime vídeo para o tamanho alvo."""
+    try:
+        output_file = f"{video_file}_compressed.mp4"
+        
+        if aggressive:
+            # Compressão mais agressiva
+            command = [
+                'ffmpeg', '-i', video_file,
+                '-vf', 'scale=640:480',
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-crf', '28', '-c:a', 'aac', '-b:a', '64k',
+                '-y', output_file
+            ]
+        else:
+            # Compressão padrão
+            command = [
+                'ffmpeg', '-i', video_file,
+                '-c:v', 'libx264', '-preset', 'medium',
+                '-crf', '23', '-c:a', 'aac', '-b:a', '128k',
+                '-y', output_file
+            ]
+        
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        await process.communicate()
+        
+        if process.returncode == 0 and os.path.exists(output_file):
+            # Verifica se o arquivo comprimido é menor que o alvo
+            if os.path.getsize(output_file) <= target_size:
+                return output_file
+            else:
+                os.remove(output_file)
+                return None
+        else:
+            return None
+            
+    except Exception as e:
+        logger.error(f"Erro na compressão: {e}")
+        return None
+
+async def send_video_part(chat_id, video_file, context, caption):
+    """Envia uma parte do vídeo."""
+    try:
+        with open(video_file, 'rb') as video:
+            await context.bot.send_video(
+                chat_id,
+                video=video,
+                caption=caption,
+                read_timeout=300,
+                write_timeout=300
+            )
+    except Exception as e:
+        logger.error(f"Erro ao enviar parte do vídeo: {e}")
+        # Fallback para documento
+        with open(video_file, 'rb') as video:
+            await context.bot.send_document(
+                chat_id,
+                document=video,
+                filename=f"{caption}.mp4",
+                read_timeout=300,
+                write_timeout=300
+            )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
             # Procura por arquivos de partes
             video_parts = []
             for file in os.listdir('.'):
@@ -251,8 +336,34 @@ async def download_story(update, context, url=None):
 
 # Função auxiliar para envio de vídeos
 async def send_video_with_fallback(chat_id, video_file, context, caption=""):
-    """Envia vídeo com fallback para documento em caso de timeout."""
+    """Envia vídeo com fallback para documento em caso de timeout e compressão para arquivos grandes."""
     try:
+        # Verifica o tamanho do arquivo (limite do Telegram: 50MB)
+        file_size = os.path.getsize(video_file)
+        max_size = 50 * 1024 * 1024  # 50MB em bytes
+        
+        # Se o arquivo for muito grande, comprime
+        if file_size > max_size:
+            logger.info(f"Arquivo {video_file} muito grande ({file_size/1024/1024:.1f}MB), comprimindo...")
+            compressed_file = await compress_video(video_file, max_size)
+            if compressed_file and os.path.exists(compressed_file):
+                video_file = compressed_file
+                logger.info(f"Vídeo comprimido para {os.path.getsize(video_file)/1024/1024:.1f}MB")
+            else:
+                # Se a compressão falhar, tenta dividir o arquivo
+                logger.warning("Compressão falhou, tentando dividir arquivo...")
+                await context.bot.send_message(chat_id, "📹 Arquivo muito grande, dividindo em partes...")
+                parts = await split_file_by_size(video_file, max_size)
+                if parts:
+                    for i, part in enumerate(parts, 1):
+                        part_caption = f"{caption} - Parte {i}/{len(parts)}"
+                        await send_video_part(chat_id, part, context, part_caption)
+                        os.remove(part)  # Remove parte após envio
+                    return
+                else:
+                    await context.bot.send_message(chat_id, "❌ Não foi possível processar o arquivo (muito grande)")
+                    return
+        
         # Gera thumbnail do vídeo usando ffmpeg
         thumbnail_file = None
         try:
@@ -309,17 +420,44 @@ async def send_video_with_fallback(chat_id, video_file, context, caption=""):
         if "timed out" in str(video_error).lower() or "timeout" in str(video_error).lower():
             logger.warning(f"Timeout ao enviar {video_file}, enviando como documento")
             await context.bot.send_message(chat_id, text=f"⏰ Timeout no {caption.lower()}, enviando como documento...")
+        elif "request entity too large" in str(video_error).lower() or "too large" in str(video_error).lower():
+            logger.warning(f"Arquivo {video_file} muito grande para Telegram, tentando compressão adicional")
+            await context.bot.send_message(chat_id, text=f"📹 Arquivo muito grande, tentando compressão adicional...")
+            # Tenta compressão mais agressiva
+            ultra_compressed = await compress_video(video_file, 25 * 1024 * 1024, aggressive=True)
+            if ultra_compressed and os.path.exists(ultra_compressed):
+                try:
+                    with open(ultra_compressed, 'rb') as video:
+                        await context.bot.send_video(
+                            chat_id,
+                            video=video,
+                            caption=f"{caption} (Comprimido)",
+                            read_timeout=300,
+                            write_timeout=300
+                        )
+                    os.remove(ultra_compressed)
+                    return
+                except:
+                    pass
+            await context.bot.send_message(chat_id, "❌ Arquivo muito grande, não foi possível enviar")
+            return
         else:
             logger.warning(f"Erro ao enviar {video_file} como vídeo: {video_error}")
         
-        with open(video_file, 'rb') as video:
-            await context.bot.send_document(
-                chat_id,
-                document=video,
-                filename=f"{caption.replace('/', '_')}.mp4",
-                read_timeout=300,
-                write_timeout=300
-            )
+        # Fallback para documento apenas se não for problema de tamanho
+        if "too large" not in str(video_error).lower():
+            try:
+                with open(video_file, 'rb') as video:
+                    await context.bot.send_document(
+                        chat_id,
+                        document=video,
+                        filename=f"{caption.replace('/', '_')}.mp4",
+                        read_timeout=300,
+                        write_timeout=300
+                    )
+            except Exception as doc_error:
+                logger.error(f"Erro ao enviar como documento: {doc_error}")
+                await context.bot.send_message(chat_id, "❌ Não foi possível enviar o arquivo")
 
 # Funções de listagem e qualidade
 async def list_available_videos(url):
