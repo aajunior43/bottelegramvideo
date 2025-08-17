@@ -34,9 +34,10 @@ from tiktok_downloader import (
 from twitter_downloader import (
     download_twitter_video, download_twitter_gif, is_twitter_url
 )
-from youtube_shorts_downloader import (
-    download_youtube_short, is_youtube_shorts_url, is_vertical_youtube_video
-)
+# YouTube Shorts removido - comentado
+# from youtube_shorts_downloader import (
+#     download_youtube_short, is_youtube_shorts_url, is_vertical_youtube_video
+# )
 from twitch_downloader import (
     download_twitch_clip, is_twitch_url, is_twitch_clip_url
 )
@@ -541,15 +542,15 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             ]
         ]
     
-    # YouTube Shorts
-    elif is_youtube_shorts_url(message_text):
-        platform_detected = "YouTube Shorts"
-        platform_emoji = "📱"
-        keyboard = [
-            [
-                InlineKeyboardButton("📱 Baixar Short", callback_data=f"youtube_short:{url_id}")
-            ]
-        ]
+    # YouTube Shorts removido - comentado
+    # elif is_youtube_shorts_url(message_text):
+    #     platform_detected = "YouTube Shorts"
+    #     platform_emoji = "📱"
+    #     keyboard = [
+    #         [
+    #             InlineKeyboardButton("📱 Baixar Short", callback_data=f"youtube_short:{url_id}")
+    #         ]
+    #     ]
     
     # Twitch
     elif is_twitch_url(message_text):
@@ -712,8 +713,9 @@ async def execute_real_download(item, context):
                 await download_tiktok_video(fake_update, context, url)
         elif is_twitter_url(url):
             await download_twitter_video(fake_update, context, url)
-        elif is_youtube_shorts_url(url):
-            await download_youtube_short(fake_update, context, url)
+        # YouTube Shorts removido - comentado
+        # elif is_youtube_shorts_url(url):
+        #     await download_youtube_short(fake_update, context, url)
         elif is_twitch_url(url):
             await download_twitch_clip(fake_update, context, url)
         elif is_pinterest_url(url):
@@ -985,13 +987,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif action == 'twitter_gif':
             await download_twitter_gif(query, context, url)
     
-    elif action == 'youtube_short':
-        url_id = callback_parts[1]
-        url = get_url_from_context(url_id)
-        
-        await query.edit_message_text(f"📱 **Processando YouTube Short...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
-        
-        await download_youtube_short(query, context, url)
+    # YouTube Shorts removido - comentado
+    # elif action == 'youtube_short':
+    #     url_id = callback_parts[1]
+    #     url = get_url_from_context(url_id)
+    #     
+    #     await query.edit_message_text(f"📱 **Processando YouTube Short...**\n\n📎 `{url[:50]}...`", parse_mode='Markdown')
+    #     
+    #     await download_youtube_short(query, context, url)
     
     elif action.startswith('twitch_'):
         url_id = callback_parts[1]
