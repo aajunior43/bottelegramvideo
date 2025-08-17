@@ -691,6 +691,50 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 # Processador da fila de downloads (versão simplificada)
+async def execute_real_download(item, context):
+    """Executa o download real baseado na URL e tipo de plataforma."""
+    try:
+        url = item.url
+        chat_id = item.chat_id
+        
+        # Cria um objeto fake update para compatibilidade
+        fake_update = type('obj', (object,), {
+            'message': type('obj', (object,), {
+                'chat_id': chat_id
+            })()
+        })()
+        
+        # Detecta a plataforma e executa o download apropriado
+        if is_tiktok_url(url):
+            if item.download_type == 'audio':
+                await download_tiktok_audio(fake_update, context, url)
+            else:
+                await download_tiktok_video(fake_update, context, url)
+        elif is_twitter_url(url):
+            await download_twitter_video(fake_update, context, url)
+        elif is_youtube_shorts_url(url):
+            await download_youtube_short(fake_update, context, url)
+        elif is_twitch_url(url):
+            await download_twitch_clip(fake_update, context, url)
+        elif is_pinterest_url(url):
+            await download_pinterest_pin(fake_update, context, url)
+        elif is_linkedin_url(url):
+            await download_linkedin_video(fake_update, context, url)
+        elif is_telegram_url(url):
+            if is_telegram_channel_url(url):
+                await download_telegram_channel(fake_update, context, url)
+            else:
+                await download_telegram_message(fake_update, context, url)
+        else:
+             # URL genérica - tenta download com yt-dlp
+             await download_generic_video(fake_update, context, url)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Erro no download real: {e}")
+        return False
+
 async def process_download_queue(context):
     """Processa a fila de downloads sequencialmente."""
     global current_download
@@ -726,20 +770,43 @@ async def process_download_queue(context):
                 0
             )
             
-            # Simula processamento (implementar lógica real)
-            await asyncio.sleep(2)
-            
-            # Marca como concluído
-            item.status = 'completed'
-            item.completed_time = datetime.now().isoformat()
-            
-            await send_progress_message(
-                context,
-                item.chat_id,
-                f"Download concluído\n\n{type_emoji} {item.download_type.title()} processado!",
-                'completed',
-                100
-            )
+            # Executa o download real baseado na URL
+            try:
+                success = await execute_real_download(item, context)
+                
+                if success:
+                    # Marca como concluído
+                    item.status = 'completed'
+                    item.completed_time = datetime.now().isoformat()
+                    
+                    await send_progress_message(
+                        context,
+                        item.chat_id,
+                        f"Download concluído\n\n{type_emoji} {item.download_type.title()} processado!",
+                        'completed',
+                        100
+                    )
+                else:
+                    # Marca como falhou
+                    item.status = 'failed'
+                    item.error_message = "Falha no download"
+                    
+                    await send_progress_message(
+                        context,
+                        item.chat_id,
+                        f"Download falhou\n\n{type_emoji} Erro ao processar {item.download_type}",
+                        'error'
+                    )
+            except Exception as download_error:
+                item.status = 'failed'
+                item.error_message = str(download_error)[:100]
+                
+                await send_progress_message(
+                    context,
+                    item.chat_id,
+                    f"Download falhou\n\nErro: {str(download_error)[:50]}...",
+                    'error'
+                )
             
             save_queue()
             await asyncio.sleep(1)
@@ -754,6 +821,100 @@ async def process_download_queue(context):
             break
     
     current_download = None
+
+async def download_generic_video(update, context, url):
+    """Download genérico para URLs que não são de plataformas específicas."""
+    try:
+        chat_id = update.message.chat_id if hasattr(update, 'message') else update
+        message_id = getattr(update.message, 'message_id', 0) if hasattr(update, 'message') else 0
+        
+        await send_progress_message(
+            context, chat_id,
+            f"🎬 Iniciando download genérico\n\n📎 {url[:50]}...",
+            'downloading', 0
+        )
+        
+        # Template de saída
+        output_template = f"{chat_id}_{message_id}_generic_%(title)s.%(ext)s"
+        
+        # Comando yt-dlp genérico
+        command = [
+            'yt-dlp',
+            '--format', 'best[height<=720]/best',
+            '--output', output_template,
+            '--no-playlist',
+            url
+        ]
+        
+        logger.info(f"Executando comando genérico: {' '.join(command)}")
+        
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            await send_progress_message(
+                context, chat_id,
+                "🎬 Download concluído! Processando arquivo...",
+                'processing', 75
+            )
+            
+            # Procura por arquivos baixados
+            downloaded_files = []
+            for file in os.listdir('.'):
+                if file.startswith(f"{chat_id}_{message_id}_generic_") and file.endswith(('.mp4', '.webm', '.mkv')):
+                    downloaded_files.append(file)
+            
+            if downloaded_files:
+                video_file = downloaded_files[0]
+                
+                # Envia o vídeo
+                await send_video_with_fallback(
+                    chat_id, video_file, context,
+                    f"🎬 Vídeo Baixado\n\n📎 {url[:50]}..."
+                )
+                
+                # Remove arquivos temporários
+                for file in os.listdir('.'):
+                    if file.startswith(f"{chat_id}_{message_id}_generic_"):
+                        try:
+                            os.remove(file)
+                            logger.info(f"Arquivo removido: {file}")
+                        except Exception as e:
+                            logger.warning(f"Erro ao remover {file}: {e}")
+                
+                await send_progress_message(
+                    context, chat_id,
+                    "✅ Download genérico concluído com sucesso!",
+                    'completed', 100
+                )
+            else:
+                await send_progress_message(
+                    context, chat_id,
+                    "❌ Nenhum arquivo encontrado\n\n💡 Verifique se a URL é válida",
+                    'error'
+                )
+        else:
+            error_message = stderr.decode('utf-8', errors='ignore')
+            logger.error(f"Erro no yt-dlp genérico: {error_message}")
+            
+            await send_progress_message(
+                context, chat_id,
+                f"❌ Erro no download\n\nErro: `{error_message.splitlines()[-1] if error_message.splitlines() else 'Erro desconhecido'}`",
+                'error'
+            )
+            
+    except Exception as e:
+        logger.error(f"Erro inesperado no download genérico: {e}")
+        await send_progress_message(
+            context, chat_id,
+            f"❌ Erro inesperado\n\nDetalhes: {str(e)[:100]}...",
+            'error'
+        )
 
 # Função de callback para botões
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
